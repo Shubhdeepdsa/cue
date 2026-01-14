@@ -1,0 +1,187 @@
+# ============================================================================
+# CUE v0.1 - Behavioral Configuration
+# ============================================================================
+# This file controls all runtime behavior. Secrets belong in .env, not here.
+# ============================================================================
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HARDWARE SIMULATION
+# ─────────────────────────────────────────────────────────────────────────────
+hardware:
+  # Audio capture settings
+  audio:
+    sample_rate: 16000          # Hz - Deepgram optimal
+    channels: 1                  # Mono recording
+    dtype: "int16"               # Audio bit depth
+    chunk_duration_ms: 100       # Buffer chunk size
+    max_recording_seconds: 60    # Safety limit
+
+  # Input control
+  hotkey: "space"                # Toggle key for record/stop
+  debounce_ms: 200               # Prevent accidental triggers
+  
+  # Input mode: "toggle" (click to start/stop) or "hold" (hold to record)
+  input_mode: "toggle"
+  
+  # Double-tap threshold for cancelling (ms) - toggle mode only
+  double_tap_ms: 300
+  
+  # Minimum hold duration before recording counts (ms) - hold mode only
+  # Releases shorter than this will cancel instead of process
+  min_hold_duration_ms: 500
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LED STATE SIMULATION
+# ─────────────────────────────────────────────────────────────────────────────
+led_states:
+  idle:
+    color: "#00FF88"
+    label: "● READY"
+    description: "System ready - Press SPACE to record"
+    
+  recording:
+    color: "#FF3366"
+    label: "◉ RECORDING"
+    description: "Listening... Press SPACE to stop"
+    blink: true
+    blink_interval_ms: 500
+    
+  processing:
+    color: "#FFAA00"
+    label: "◐ PROCESSING"
+    description: "Analyzing your intent..."
+    animate: true
+    
+  error:
+    color: "#FF0000"
+    label: "✖ ERROR"
+    description: "Something went wrong"
+    
+  success:
+    color: "#00FF00"
+    label: "✔ SUCCESS"
+    description: "Ticket generated!"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# INTELLIGENCE LAYER
+# ─────────────────────────────────────────────────────────────────────────────
+llm:
+  # Ollama configuration
+  model: "llama3.1:8b"
+  host: "http://localhost:11434"
+  timeout_seconds: 30
+  temperature: 0.7
+  max_tokens: 1024
+
+  # Scratchpad & Completion Test prompting strategy
+  scratchpad_prompt: |
+    # SCRATCHPAD
+    You are an intent-analysis assistant. Think through this step by step.
+    
+    ## Instructions
+    1. Read the user's transcribed speech carefully
+    2. Identify ALL distinct intents/tasks (what do they want to accomplish?)
+    3. If there are multiple separate tasks, list them individually
+    4. Extract key entities for EACH task
+    5. Determine if each request is complete
+    
+    ## User's Speech
+    "{transcription}"
+    
+    ## Your Analysis
+    Think through this step by step:
+
+  completion_test_prompt: |
+    Based on your analysis above, answer these questions:
+    
+    1. How many distinct intents did you find?
+    2. For each intent, is it clear and actionable?
+    3. Are all required details present for each?
+    4. Confidence score (0-100) for the overall analysis:
+    
+    If everything is clear, output:
+    INTENT_COMPLETE: [summary of all intents]
+    
+    Otherwise, output:
+    INTENT_INCOMPLETE: [what is missing]
+
+  # Final extraction prompt
+  extraction_prompt: |
+    Extract the final intents from the analysis above.
+    
+  # Final extraction prompt
+  extraction_prompt: |
+    Extract the final intents from the analysis above.
+    
+    Respond with a valid JSON object containing a list of intents.
+    
+    Structure:
+    {
+      "intents": [
+        {
+          "intent": "Task 1 description",
+          "action": "verb",
+          "entities": {"key": "value"},
+          "confidence": 0.9
+        },
+        ...
+      ]
+    }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DEEPGRAM STT
+# ─────────────────────────────────────────────────────────────────────────────
+deepgram:
+  model: "nova-2"
+  language: "en-US"
+  smart_format: true
+  punctuate: true
+  diarize: false
+  utterances: false
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OUTPUT PATHS
+# ─────────────────────────────────────────────────────────────────────────────
+paths:
+  tickets_dir: "tickets"
+  temp_audio_dir: ".temp_audio"
+
+  # Ticket template with placeholders
+  ticket_template: |
+    ╔══════════════════════════════════════════════════════════════════╗
+    ║                        CUE TICKET #{id}                          ║
+    ╠══════════════════════════════════════════════════════════════════╣
+    ║  TIMESTAMP   │ {timestamp}                                       ║
+    ╠══════════════════════════════════════════════════════════════════╣
+    ║  INTENT      │ {intent}                                          ║
+    ╠══════════════════════════════════════════════════════════════════╣
+    ║  ACTION      │ {action}                                          ║
+    ╠══════════════════════════════════════════════════════════════════╣
+    ║  ENTITIES    │ {entities}                                        ║
+    ╠══════════════════════════════════════════════════════════════════╣
+    ║  CONFIDENCE  │ {confidence}%                                     ║
+    ╠══════════════════════════════════════════════════════════════════╣
+    ║  RAW INPUT   │ {transcription}                                   ║
+    ╚══════════════════════════════════════════════════════════════════╝
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LOGGING
+# ─────────────────────────────────────────────────────────────────────────────
+logging:
+  level: "INFO"                  # DEBUG, INFO, WARNING, ERROR
+  show_timestamps: true
+  rich_tracebacks: true
+  log_to_file: false
+  log_file_path: "cue.log"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UI THEME
+# ─────────────────────────────────────────────────────────────────────────────
+ui:
+  title: "CUE v0.1 • Intent Capture System"
+  border_style: "rounded"
+  primary_color: "#00D4FF"
+  secondary_color: "#FF6B6B"
+  accent_color: "#FFE66D"
+  show_audio_meter: true
+  refresh_rate_hz: 10
