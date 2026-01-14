@@ -6,9 +6,10 @@ Tests for the intelligence layer including STT and LLM processing.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -45,6 +46,117 @@ class TestDeepgramService:
         
         with pytest.raises(ValueError, match="empty"):
             service.transcribe(b"")
+
+    @pytest.mark.asyncio
+    async def test_transcribe_async_success(self) -> None:
+        """Test successful async transcription."""
+        from cue.intelligence import DeepgramService
+        
+        service = DeepgramService(api_key="test_key")
+        
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "results": {
+                "channels": [
+                    {
+                        "alternatives": [
+                            {"transcript": "Hello world", "confidence": 0.95}
+                        ]
+                    }
+                ]
+            },
+            "metadata": {"duration": 1.5},
+        }
+        
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_context = AsyncMock()
+            mock_context.__aenter__.return_value.post = AsyncMock(return_value=mock_response)
+            mock_client.return_value = mock_context
+            
+            result = await service.transcribe_async(b"audio_data")
+            
+            assert result.text == "Hello world"
+            assert result.confidence == 0.95
+            assert result.duration_seconds == 1.5
+
+    @pytest.mark.asyncio
+    async def test_transcribe_async_api_error(self) -> None:
+        """Test async transcription handles API errors."""
+        from cue.intelligence import DeepgramService
+        
+        service = DeepgramService(api_key="test_key")
+        
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.text = "Bad request"
+        
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_context = AsyncMock()
+            mock_context.__aenter__.return_value.post = AsyncMock(return_value=mock_response)
+            mock_client.return_value = mock_context
+            
+            with pytest.raises(ValueError, match="Deepgram API error"):
+                await service.transcribe_async(b"audio_data")
+
+    @pytest.mark.asyncio
+    async def test_transcribe_async_no_channels(self) -> None:
+        """Test async transcription handles missing channels."""
+        from cue.intelligence import DeepgramService
+        
+        service = DeepgramService(api_key="test_key")
+        
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"results": {"channels": []}}
+        
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_context = AsyncMock()
+            mock_context.__aenter__.return_value.post = AsyncMock(return_value=mock_response)
+            mock_client.return_value = mock_context
+            
+            with pytest.raises(ValueError, match="No transcription channels"):
+                await service.transcribe_async(b"audio_data")
+
+    @pytest.mark.asyncio
+    async def test_transcribe_async_no_alternatives(self) -> None:
+        """Test async transcription handles missing alternatives."""
+        from cue.intelligence import DeepgramService
+        
+        service = DeepgramService(api_key="test_key")
+        
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "results": {
+                "channels": [{"alternatives": []}]
+            }
+        }
+        
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_context = AsyncMock()
+            mock_context.__aenter__.return_value.post = AsyncMock(return_value=mock_response)
+            mock_client.return_value = mock_context
+            
+            with pytest.raises(ValueError, match="No transcription alternatives"):
+                await service.transcribe_async(b"audio_data")
+
+    def test_transcribe_sync(self) -> None:
+        """Test synchronous transcribe wrapper."""
+        from cue.intelligence import DeepgramService
+        
+        service = DeepgramService(api_key="test_key")
+        
+        with patch.object(service, "transcribe_async") as mock_async:
+            mock_result = MagicMock()
+            mock_async.return_value = mock_result
+            
+            with patch("asyncio.run") as mock_run:
+                mock_run.return_value = mock_result
+                
+                result = service.transcribe(b"audio_data")
+                
+                mock_run.assert_called_once()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -129,6 +241,24 @@ class TestOllamaService:
             assert result["intent"] == "Test"
             assert result["action"] == "test"
 
+    def test_json_extraction_array(self) -> None:
+        """Test JSON extraction of array."""
+        with patch("ollama.Client"):
+            from cue.intelligence import OllamaService
+            
+            service = OllamaService(
+                scratchpad_prompt="",
+                completion_test_prompt="",
+                extraction_prompt="",
+            )
+            
+            text = '[{"intent": "Task 1"}, {"intent": "Task 2"}]'
+            
+            result = service._extract_json(text)
+            
+            assert isinstance(result, list)
+            assert len(result) == 2
+
     def test_json_extraction_fallback(self) -> None:
         """Test JSON extraction fallback for invalid input."""
         with patch("ollama.Client"):
@@ -188,6 +318,57 @@ class TestOllamaService:
             assert result[0].intent == "Empty input"
             assert result[0].action == "none"
             assert result[0].confidence == 0.0
+
+    @pytest.mark.asyncio
+    async def test_analyze_intent_async_success(self) -> None:
+        """Test successful async intent analysis."""
+        with patch("ollama.Client") as mock_client:
+            from cue.intelligence import OllamaService
+            
+            # Mock generate responses
+            mock_client.return_value.generate.return_value = {
+                "response": '{"intent": "Test", "action": "test", "confidence": 0.9}'
+            }
+            
+            service = OllamaService(
+                scratchpad_prompt="{transcription}",
+                completion_test_prompt="Complete",
+                extraction_prompt="Extract",
+            )
+            
+            # Patch asyncio.to_thread to run synchronously
+            async def mock_to_thread(func, *args, **kwargs):
+                return func(*args, **kwargs)
+            
+            with patch("asyncio.to_thread", side_effect=mock_to_thread):
+                result = await service.analyze_intent_async("Test input")
+                
+                assert len(result) >= 1
+                assert result[0].raw_transcription == "Test input"
+
+    @pytest.mark.asyncio
+    async def test_analyze_intent_async_error(self) -> None:
+        """Test async intent analysis handles errors."""
+        with patch("ollama.Client") as mock_client:
+            from cue.intelligence import OllamaService
+            
+            mock_client.return_value.generate.side_effect = Exception("LLM error")
+            
+            service = OllamaService(
+                scratchpad_prompt="{transcription}",
+                completion_test_prompt="Complete",
+                extraction_prompt="Extract",
+            )
+            
+            async def mock_to_thread(func, *args, **kwargs):
+                return func(*args, **kwargs)
+            
+            with patch("asyncio.to_thread", side_effect=mock_to_thread):
+                result = await service.analyze_intent_async("Test input")
+                
+                assert len(result) == 1
+                assert result[0].intent == "Error analyzing intent"
+                assert result[0].action == "error"
 
     def test_health_check_success(self) -> None:
         """Test health check returns True when Ollama is available."""
@@ -270,6 +451,146 @@ class TestIntelligenceLayer:
             assert "deepgram" in health
             assert health["deepgram"] is True  # Has API key
 
+    @pytest.mark.asyncio
+    async def test_process_audio_async_success(self) -> None:
+        """Test successful async audio processing."""
+        with patch("ollama.Client"):
+            from cue.intelligence import IntelligenceLayer, TranscriptionResult, IntentResult
+            
+            layer = IntelligenceLayer(
+                deepgram_api_key="test_key",
+                deepgram_config={},
+                llm_config={
+                    "scratchpad_prompt": "{transcription}",
+                    "completion_test_prompt": "",
+                    "extraction_prompt": "",
+                },
+            )
+            
+            # Mock STT
+            mock_transcription = TranscriptionResult(
+                text="Hello world",
+                confidence=0.95,
+                duration_seconds=1.0,
+                words=[],
+            )
+            layer.stt.transcribe_async = AsyncMock(return_value=mock_transcription)
+            
+            # Mock LLM
+            mock_intent = IntentResult(
+                intent="Greeting",
+                action="greet",
+                entities={},
+                confidence=0.9,
+                raw_transcription="Hello world",
+                analysis="Greeting detected",
+            )
+            layer.llm.analyze_intent_async = AsyncMock(return_value=[mock_intent])
+            
+            result = await layer.process_audio_async(b"audio_data")
+            
+            assert len(result) == 1
+            assert result[0].intent == "Greeting"
+
+    @pytest.mark.asyncio
+    async def test_process_audio_async_empty_transcription(self) -> None:
+        """Test async audio processing with empty transcription."""
+        with patch("ollama.Client"):
+            from cue.intelligence import IntelligenceLayer, TranscriptionResult
+            
+            layer = IntelligenceLayer(
+                deepgram_api_key="test_key",
+                deepgram_config={},
+                llm_config={
+                    "scratchpad_prompt": "",
+                    "completion_test_prompt": "",
+                    "extraction_prompt": "",
+                },
+            )
+            
+            # Mock STT with empty result
+            mock_transcription = TranscriptionResult(
+                text="",
+                confidence=0.0,
+                duration_seconds=1.0,
+                words=[],
+            )
+            layer.stt.transcribe_async = AsyncMock(return_value=mock_transcription)
+            
+            result = await layer.process_audio_async(b"audio_data")
+            
+            assert len(result) == 1
+            assert result[0].intent == "No speech detected"
+
+    @pytest.mark.asyncio
+    async def test_process_audio_async_with_callback(self) -> None:
+        """Test async audio processing invokes callback."""
+        with patch("ollama.Client"):
+            from cue.intelligence import IntelligenceLayer, TranscriptionResult, IntentResult
+            
+            layer = IntelligenceLayer(
+                deepgram_api_key="test_key",
+                deepgram_config={},
+                llm_config={
+                    "scratchpad_prompt": "{transcription}",
+                    "completion_test_prompt": "",
+                    "extraction_prompt": "",
+                },
+            )
+            
+            mock_transcription = TranscriptionResult(
+                text="Test",
+                confidence=0.95,
+                duration_seconds=1.0,
+                words=[],
+            )
+            layer.stt.transcribe_async = AsyncMock(return_value=mock_transcription)
+            
+            mock_intent = IntentResult(
+                intent="Test",
+                action="test",
+                entities={},
+                confidence=0.9,
+                raw_transcription="Test",
+                analysis="Test",
+            )
+            layer.llm.analyze_intent_async = AsyncMock(return_value=[mock_intent])
+            
+            callback_called = []
+            
+            def on_transcription(trans):
+                callback_called.append(trans)
+            
+            await layer.process_audio_async(b"audio_data", on_transcription=on_transcription)
+            
+            assert len(callback_called) == 1
+            assert callback_called[0].text == "Test"
+
+    def test_process_audio_sync(self) -> None:
+        """Test synchronous process_audio wrapper."""
+        with patch("ollama.Client"):
+            from cue.intelligence import IntelligenceLayer
+            
+            layer = IntelligenceLayer(
+                deepgram_api_key="test_key",
+                deepgram_config={},
+                llm_config={
+                    "scratchpad_prompt": "",
+                    "completion_test_prompt": "",
+                    "extraction_prompt": "",
+                },
+            )
+            
+            with patch.object(layer, "process_audio_async") as mock_async:
+                mock_result = MagicMock()
+                
+                with patch("asyncio.run") as mock_run:
+                    mock_run.return_value = mock_result
+                    
+                    result = layer.process_audio(b"audio_data")
+                    
+                    mock_run.assert_called_once()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # INTENT RESULT TESTS
@@ -290,3 +611,46 @@ class TestIntentResult:
         """Test IntentResult contains analysis."""
         assert sample_intent_result.analysis is not None
         assert len(sample_intent_result.analysis) > 0
+
+    def test_intent_result_defaults(self) -> None:
+        """Test IntentResult has correct defaults."""
+        from cue.intelligence import IntentResult
+        
+        result = IntentResult(
+            intent="Test",
+            action="test",
+            entities={},
+            confidence=0.5,
+            raw_transcription="test",
+            analysis="test",
+        )
+        
+        assert result.title == ""
+        assert result.category == ""
+        assert result.priority == "medium"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TRANSCRIPTION RESULT TESTS
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestTranscriptionResult:
+    """Tests for TranscriptionResult data class."""
+
+    def test_transcription_result_creation(self) -> None:
+        """Test TranscriptionResult is created correctly."""
+        from cue.intelligence import TranscriptionResult
+        
+        result = TranscriptionResult(
+            text="Hello world",
+            confidence=0.95,
+            duration_seconds=1.5,
+            words=[{"word": "Hello"}, {"word": "world"}],
+        )
+        
+        assert result.text == "Hello world"
+        assert result.confidence == 0.95
+        assert result.duration_seconds == 1.5
+        assert len(result.words) == 2
+
