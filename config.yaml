@@ -151,18 +151,18 @@ paths:
   # Ticket template with placeholders
   ticket_template: |
     ╭── 🎫 CUE TICKET #{id} ───────────────────────────────────╮
-    │                                                         │
-    │  TITL:  {title}                                         │
-    │  CATG:  {category}                                      │
-    │  ACTN:  {next_action}                                   │
-    │  EST :  {estimated_time}                                │
+    │                                                          │
+    │  TITL:  {title}│
+    │  CATG:  {category}│
+    │  ACTN:  {next_action}│
+    │  EST :  {estimated_time}│
     │                                                         │
     ├─────────────────────────────────────────────────────────┤
-    │  CREATED:   {timestamp}                                 │
-    │  CONFID:    {confidence}%                               │
+    │  CREATED:   {timestamp}│
+    │  CONFID:    {confidence}│
     │                                                         │
     │  RAW INPUT:                                             │
-    │  {transcription}                                        │
+    │  {transcription}│
     │                                                         │
     ╰─────────────────────────────────────────────────────────╯
 

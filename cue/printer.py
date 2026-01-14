@@ -89,6 +89,50 @@ class TicketPrinter:
             return ""
         return textwrap.fill(text, width=width)
 
+    def _format_field(self, value: str, width: int = 51) -> str:
+        """
+        Format a field value to fixed width, truncating or padding as needed.
+        
+        Args:
+            value: The field value to format.
+            width: Target width for the field.
+            
+        Returns:
+            Field value padded/truncated to exact width.
+        """
+        if len(value) <= width:
+            return value.ljust(width)
+        else:
+            # Truncate with ellipsis for single-line fields
+            return value[: width - 3] + "..."
+
+    def _format_multiline_field(self, text: str, content_width: int = 51) -> str:
+        """
+        Format a multi-line field with proper wrapping and box borders.
+        
+        Args:
+            text: The text to wrap and format.
+            content_width: Width of content between borders.
+            
+        Returns:
+            Formatted multi-line text compatible with template.
+        """
+        if not text:
+            return " " * content_width
+        
+        # Wrap the text
+        wrapped_lines = textwrap.wrap(text, width=content_width)
+        
+        # Pad every line to exact width
+        padded_lines = [line.ljust(content_width) for line in wrapped_lines]
+        
+        # Join with the border sequence: 
+        # End prev line with │, Newline, Start next line with │  
+        # The template provides the very first "│  " and the very last "│"
+        separator = f"│\n│  "
+        
+        return separator.join(padded_lines)
+
     def generate_ticket_content(
         self,
         intent_result: "IntentResult",
@@ -106,44 +150,35 @@ class TicketPrinter:
         Returns:
             Formatted ticket string.
         """
-        # Format fields with wrapping
-        # We assume the template handles indentation if needed, or we just wrap.
-        # For the specific box template, simple wrapping might break vertical lines 
-        # unless the template is designed for it. 
-        # The user's template has box drawing chars. 
-        # To strictly maintain the box, we would need sophisticated block formatting.
-        # For now, we will use simple placement or just fill.
-        # The user asked for "word wrap basically if the raw input is long".
-        # The provided template put {transcription} inside the box.
-        # If we just replace it, newlines will break the box sides.
-        # We will wrap the text, but to keep the box perfect is hard without a layout engine.
-        # However, for an "80mm paper" sim, maybe we just wrap and don't worry about closing the right side 
-        # perfectly on every line, OR we assume the template is flexible.
-        # Let's try to fit it into the visual block.
+        # Field widths calculated based on template structure:
+        # Total box width = 57 characters inside (between ╭ and ╮)
+        # Each field width = 57 - prefix_length - 1 (for closing │)
+        # │  TITL:  {title}│ → prefix is 10 chars → width = 46
+        # │  CREATED:   {timestamp}│ → prefix is 14 chars → width = 42
+        # │  {transcription}│ → prefix is 3 chars → width = 53
         
-        # NOTE: The template in config.yaml is:
-        # ╭── 🎫 CUE TICKET #{id} ...
-        # ...
-        # │  RAW INPUT:
-        # │  {transcription}
-        # ...
-        # we will wrap transcription to fit width.
+        # Format each field to fixed width
+        title_formatted = self._format_field(intent_result.title, width=46)
+        category_formatted = self._format_field(intent_result.category, width=46)
+        next_action_formatted = self._format_field(intent_result.next_action, width=46)
+        estimated_time_formatted = self._format_field(intent_result.estimated_time, width=46)
+        timestamp_formatted = self._format_field(timestamp, width=42)
+        confidence_formatted = self._format_field(f"{intent_result.confidence * 100:.1f}%", width=42)
         
-        wrapped_transcription = self._wrap_text(intent_result.raw_transcription, width=54)
-        # Indent subsequent lines of transcription to align with first line if needed, 
-        # but the template puts it on a new line.
-        # We add a left margin to wrapped lines to look good.
-        wrapped_transcription = wrapped_transcription.replace("\n", "\n│  ")
+        # Format transcription with wrapping and borders
+        transcription_formatted = self._format_multiline_field(
+            intent_result.raw_transcription, content_width=53
+        )
 
         return self.template.format(
             id=ticket_id,
-            timestamp=timestamp,
-            title=intent_result.title,
-            category=intent_result.category,
-            next_action=intent_result.next_action,
-            estimated_time=intent_result.estimated_time,
-            confidence=f"{intent_result.confidence * 100:.1f}",
-            transcription=wrapped_transcription,
+            timestamp=timestamp_formatted,
+            title=title_formatted,
+            category=category_formatted,
+            next_action=next_action_formatted,
+            estimated_time=estimated_time_formatted,
+            confidence=confidence_formatted,
+            transcription=transcription_formatted,
         )
 
     def save_ticket(
