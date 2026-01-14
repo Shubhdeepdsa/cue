@@ -251,14 +251,15 @@ class CueStateMachine:
             )
             
             # Generate and print tickets
-            for result in results:
-                self.printer.print_ticket(result, save=True)
+            with self.led.suspend():
+                for result in results:
+                    self.printer.print_ticket(result, save=True)
             
             # Success!
             count = len(results)
-            msg = f"{count} Intent{'s' if count != 1 else ''} Captured"
+            msg = f"{count} Task{'s' if count != 1 else ''} Captured"
             if count == 1:
-                msg = f"Intent: {results[0].intent}"
+                msg = f"Task: {results[0].title}"
                 
             self._set_state(
                 SystemState.SUCCESS,

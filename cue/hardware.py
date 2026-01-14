@@ -11,6 +11,7 @@ All hardware interactions are threaded for non-blocking operation.
 
 from __future__ import annotations
 
+import contextlib
 import io
 import queue
 import threading
@@ -471,8 +472,8 @@ class LEDSimulator:
         state_name = state.name.lower()
         return self.led_config.get(state_name, self.led_config["idle"])
 
-    def _build_display(self) -> Panel:
-        """Build the Rich display panel."""
+    def _build_display(self) -> Table:
+        """Build the Rich display table."""
         config = self._get_state_config(self._current_state)
         
         # Create main content table
@@ -500,15 +501,10 @@ class LEDSimulator:
             msg_text = Text(self._message, style="italic dim")
             table.add_row(msg_text)
         
-        # Build panel
-        panel = Panel(
-            table,
-            title=f"[bold]{self.ui_config.get('title', 'CUE')}[/bold]",
-            border_style=config["color"],
-            padding=(1, 2),
-        )
+        # Add some vertical padding at the bottom for spacing
+        table.add_row("")
         
-        return panel
+        return table
 
     def _build_audio_meter(self) -> Text:
         """Build an audio level meter visualization."""
@@ -568,8 +564,31 @@ class LEDSimulator:
         with self._lock:
             self._message = message
 
+    @contextlib.contextmanager
+    def suspend(self):
+        """
+        Temporarily suspend the LED simulator display.
+        
+        Useful for printing output to the console without breaking
+        the Live display visuals.
+        """
+        if self._live and self._running:
+            # Stop the Live display (clears it due to transient=True)
+            self._live.stop()
+            try:
+                yield
+            finally:
+                # Restart the Live display
+                self._live.start()
+        else:
+            # If not running, just yield
+            yield
+
     def start(self) -> None:
         """Start the LED simulator display."""
+        if self._running:
+            return
+            
         logger.info("Starting LED simulator")
         
         self._running = True
@@ -578,12 +597,14 @@ class LEDSimulator:
             console=output_console,
             refresh_per_second=self.ui_config.get("refresh_rate_hz", 10),
             transient=True,  # Replace previous content instead of appending
+            redirect_stderr=False, # Don't capture stderr, let logs mix naturally or be handled by logger
         )
         self._live.start()
         
         # Start update thread
-        self._update_thread = threading.Thread(target=self._update_loop, daemon=True)
-        self._update_thread.start()
+        if self._update_thread is None or not self._update_thread.is_alive():
+            self._update_thread = threading.Thread(target=self._update_loop, daemon=True)
+            self._update_thread.start()
 
     def stop(self) -> None:
         """Stop the LED simulator display."""
@@ -593,6 +614,7 @@ class LEDSimulator:
         
         if self._update_thread:
             self._update_thread.join(timeout=1.0)
+            self._update_thread = None
         
         if self._live:
             self._live.stop()

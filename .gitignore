@@ -42,6 +42,6 @@ htmlcov/
 .mypy_cache/
 
 # Project specific
-tickets/*.txt
+tickets/
 *.wav
 *.mp3

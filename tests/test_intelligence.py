@@ -26,27 +26,25 @@ class TestDeepgramService:
 
     def test_service_initialization(self) -> None:
         """Test service initializes with correct parameters."""
-        with patch("deepgram.DeepgramClient"):
-            from cue.intelligence import DeepgramService
-            
-            service = DeepgramService(
-                api_key="test_key",
-                model="nova-2",
-                language="en-US",
-            )
-            
-            assert service.model == "nova-2"
-            assert service.language == "en-US"
+        from cue.intelligence import DeepgramService
+        
+        service = DeepgramService(
+            api_key="test_key",
+            model="nova-2",
+            language="en-US",
+        )
+        
+        assert service.model == "nova-2"
+        assert service.language == "en-US"
 
     def test_empty_audio_raises_error(self) -> None:
         """Test that empty audio raises ValueError."""
-        with patch("deepgram.DeepgramClient"):
-            from cue.intelligence import DeepgramService
-            
-            service = DeepgramService(api_key="test_key")
-            
-            with pytest.raises(ValueError, match="empty"):
-                service.transcribe(b"")
+        from cue.intelligence import DeepgramService
+        
+        service = DeepgramService(api_key="test_key")
+        
+        with pytest.raises(ValueError, match="empty"):
+            service.transcribe(b"")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -146,8 +144,33 @@ class TestOllamaService:
             
             result = service._extract_json(text)
             
-            assert result["intent"] == "Unknown"
-            assert result["confidence"] == 0.5
+            assert result[0]["intent"] == "Unknown"
+            assert result[0]["confidence"] == 0.5
+
+    def test_json_extraction_tickets_wrapper(self) -> None:
+        """Test JSON extraction with 'tickets' key wrapper (multi-ticket support)."""
+        with patch("ollama.Client"):
+            from cue.intelligence import OllamaService
+            
+            service = OllamaService(
+                scratchpad_prompt="",
+                completion_test_prompt="",
+                extraction_prompt="",
+            )
+            
+            # Simulate LLM response with "tickets" wrapper
+            text = '''{"tickets": [
+                {"title": "Pick up mom", "category": "Errand"},
+                {"title": "Walk the dog", "category": "Personal"}
+            ]}'''
+            
+            result = service._extract_json(text)
+            
+            # The result should be the dict with tickets key
+            assert "tickets" in result
+            assert len(result["tickets"]) == 2
+            assert result["tickets"][0]["title"] == "Pick up mom"
+            assert result["tickets"][1]["title"] == "Walk the dog"
 
     def test_empty_transcription_returns_empty_result(self) -> None:
         """Test that empty transcription returns appropriate result."""
@@ -162,9 +185,9 @@ class TestOllamaService:
             
             result = service.analyze_intent("")
             
-            assert result.intent == "Empty input"
-            assert result.action == "none"
-            assert result.confidence == 0.0
+            assert result[0].intent == "Empty input"
+            assert result[0].action == "none"
+            assert result[0].confidence == 0.0
 
     def test_health_check_success(self) -> None:
         """Test health check returns True when Ollama is available."""
@@ -207,8 +230,7 @@ class TestIntelligenceLayer:
 
     def test_layer_initialization(self) -> None:
         """Test intelligence layer initializes both services."""
-        with patch("deepgram.DeepgramClient"), \
-             patch("ollama.Client"):
+        with patch("ollama.Client"):
             from cue.intelligence import IntelligenceLayer
             
             layer = IntelligenceLayer(
@@ -227,8 +249,7 @@ class TestIntelligenceLayer:
 
     def test_health_check_aggregates_services(self) -> None:
         """Test health check reports status of all services."""
-        with patch("deepgram.DeepgramClient"), \
-             patch("ollama.Client") as mock_ollama:
+        with patch("ollama.Client") as mock_ollama:
             mock_ollama.return_value.list.return_value = {"models": []}
             
             from cue.intelligence import IntelligenceLayer

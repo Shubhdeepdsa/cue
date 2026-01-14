@@ -50,6 +50,12 @@ class IntentResult:
     confidence: float
     raw_transcription: str
     analysis: str
+    # Additional fields for ticket generation
+    title: str = ""
+    category: str = ""
+    next_action: str = ""
+    estimated_time: str = ""
+    priority: str = "medium"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -326,6 +332,11 @@ class OllamaService:
                 confidence=0.0,
                 raw_transcription=transcription,
                 analysis="No transcription provided",
+                title="Empty Input",
+                category="system",
+                next_action="none",
+                estimated_time="N/A",
+                priority="low",
             )]
         
         logger.info("Analyzing intent with Ollama...")
@@ -386,12 +397,15 @@ class OllamaService:
             # Handle list directly (if model returns array)
             if isinstance(intent_data, list):
                 results_data = intent_data
-            # Handle wrapped object (if model returns {"intents": [...]})
-            elif isinstance(intent_data, dict) and "intents" in intent_data and isinstance(intent_data["intents"], list):
-                results_data = intent_data["intents"]
-            # Handle single object (fallback)
+            # Handle wrapped object (if model returns {"tickets": [...]} or {"intents": [...]})
             elif isinstance(intent_data, dict):
-                results_data = [intent_data]
+                if "tickets" in intent_data and isinstance(intent_data["tickets"], list):
+                    results_data = intent_data["tickets"]
+                elif "intents" in intent_data and isinstance(intent_data["intents"], list):
+                    results_data = intent_data["intents"]
+                else:
+                    # Single object fallback
+                    results_data = [intent_data]
             else:
                 results_data = []
 
@@ -404,6 +418,11 @@ class OllamaService:
                     confidence=float(item.get("confidence", 0.5)),
                     raw_transcription=transcription,
                     analysis=analysis,
+                    title=item.get("title", item.get("intent", "Unknown")),
+                    category=item.get("category", "general"),
+                    next_action=item.get("next_action", item.get("action", "unknown")),
+                    estimated_time=item.get("estimated_time", "TBD"),
+                    priority=item.get("priority", "medium"),
                 ))
             
             logger.info(f"Extracted {len(results)} intents")
@@ -419,6 +438,11 @@ class OllamaService:
                 confidence=0.0,
                 raw_transcription=transcription,
                 analysis=str(e),
+                title="Error",
+                category="error",
+                next_action="retry",
+                estimated_time="N/A",
+                priority="high",
             )]
 
     def analyze_intent(self, transcription: str) -> list[IntentResult]:
@@ -501,7 +525,7 @@ class IntelligenceLayer:
         self,
         audio_bytes: bytes,
         on_transcription: callable | None = None,
-    ) -> IntentResult:
+    ) -> list[IntentResult]:
         """
         Process audio through the complete pipeline.
         
@@ -527,6 +551,11 @@ class IntelligenceLayer:
                 confidence=0.0,
                 raw_transcription="",
                 analysis="",
+                title="No Speech",
+                category="system",
+                next_action="none",
+                estimated_time="N/A",
+                priority="low",
             )]
         
         # Step 2: Intent analysis
@@ -538,7 +567,7 @@ class IntelligenceLayer:
         self,
         audio_bytes: bytes,
         on_transcription: callable | None = None,
-    ) -> IntentResult:
+    ) -> list[IntentResult]:
         """
         Synchronous wrapper for process_audio_async.
         

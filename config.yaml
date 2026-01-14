@@ -74,16 +74,21 @@ llm:
   max_tokens: 1024
 
   # Scratchpad & Completion Test prompting strategy
+  # Scratchpad & Completion Test prompting strategy
   scratchpad_prompt: |
     # SCRATCHPAD
-    You are an intent-analysis assistant. Think through this step by step.
+    You are CUE, an advanced intent-parsing engine.
     
-    ## Instructions
-    1. Read the user's transcribed speech carefully
-    2. Identify ALL distinct intents/tasks (what do they want to accomplish?)
-    3. If there are multiple separate tasks, list them individually
-    4. Extract key entities for EACH task
-    5. Determine if each request is complete
+    YOUR GOAL: Convert the raw spoken transcript into a list of strictly atomic tasks.
+    
+    YOUR PROCESS (Use this logic to separate tasks):
+    1. SEGMENTATION: Look for "Context Shifts" rather than specific words.
+       - Does the Domain change? (e.g. Work -> Home)
+       - Does the Recipient change? (e.g. Email John -> Email Sarah)
+    2. THE COMPLETION TEST:
+       - If the user lists two actions, ask: "If I do Action A, is Action B automatically done?"
+       - If NO, they are separate tickets.
+    3. FILTERING: Ignore cancelled thoughts or "thinking out loud" noises.
     
     ## User's Speech
     "{transcription}"
@@ -109,22 +114,19 @@ llm:
   extraction_prompt: |
     Extract the final intents from the analysis above.
     
-  # Final extraction prompt
-  extraction_prompt: |
-    Extract the final intents from the analysis above.
-    
-    Respond with a valid JSON object containing a list of intents.
+    OUTPUT FORMAT: You must output a valid JSON object with a "tickets" list.
     
     Structure:
     {
-      "intents": [
+      "tickets": [
         {
-          "intent": "Task 1 description",
-          "action": "verb",
-          "entities": {"key": "value"},
+          "title": "Short Verb-First Title",
+          "category": "Work/Personal/Errand",
+          "next_action": "Specific executable step",
+          "estimated_time": "15 mins",
+          "priority": "High/Medium/Low",
           "confidence": 0.9
-        },
-        ...
+        }
       ]
     }
 
@@ -148,21 +150,21 @@ paths:
 
   # Ticket template with placeholders
   ticket_template: |
-    ╔══════════════════════════════════════════════════════════════════╗
-    ║                        CUE TICKET #{id}                          ║
-    ╠══════════════════════════════════════════════════════════════════╣
-    ║  TIMESTAMP   │ {timestamp}                                       ║
-    ╠══════════════════════════════════════════════════════════════════╣
-    ║  INTENT      │ {intent}                                          ║
-    ╠══════════════════════════════════════════════════════════════════╣
-    ║  ACTION      │ {action}                                          ║
-    ╠══════════════════════════════════════════════════════════════════╣
-    ║  ENTITIES    │ {entities}                                        ║
-    ╠══════════════════════════════════════════════════════════════════╣
-    ║  CONFIDENCE  │ {confidence}%                                     ║
-    ╠══════════════════════════════════════════════════════════════════╣
-    ║  RAW INPUT   │ {transcription}                                   ║
-    ╚══════════════════════════════════════════════════════════════════╝
+    ╭── 🎫 CUE TICKET #{id} ───────────────────────────────────╮
+    │                                                         │
+    │  TITL:  {title}                                         │
+    │  CATG:  {category}                                      │
+    │  ACTN:  {next_action}                                   │
+    │  EST :  {estimated_time}                                │
+    │                                                         │
+    ├─────────────────────────────────────────────────────────┤
+    │  CREATED:   {timestamp}                                 │
+    │  CONFID:    {confidence}%                               │
+    │                                                         │
+    │  RAW INPUT:                                             │
+    │  {transcription}                                        │
+    │                                                         │
+    ╰─────────────────────────────────────────────────────────╯
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LOGGING

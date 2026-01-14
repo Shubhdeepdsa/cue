@@ -9,9 +9,10 @@ and saved to the tickets/ directory.
 from __future__ import annotations
 
 import json
+import textwrap
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
 from rich.panel import Panel
@@ -37,6 +38,7 @@ class TicketPrinter:
     
     Uses a template-based approach for consistent, aesthetic
     ticket output in both console and file formats.
+    Supports "Ticket Bundles" (folder with .txt and .json).
     
     Attributes:
         tickets_dir: Directory path for saving tickets.
@@ -61,91 +63,137 @@ class TicketPrinter:
         # Ensure tickets directory exists
         self.tickets_dir.mkdir(parents=True, exist_ok=True)
         
-        # Track ticket count for IDs
+        # Track ticket count for IDs (approximate based on folders)
         self._ticket_count = self._get_existing_ticket_count()
         
         logger.debug(f"Ticket printer initialized (dir: {tickets_dir})")
 
+    def _to_snake_case(self, text: str, max_words: int = 4) -> str:
+        """Convert text to snake_case for folder naming."""
+        import re
+        # Remove non-alphanumeric, lowercase, replace spaces with underscores
+        clean = re.sub(r'[^a-zA-Z0-9\s]', '', text.lower())
+        words = clean.split()[:max_words]
+        return '_'.join(words) if words else 'untitled'
+
     def _get_existing_ticket_count(self) -> int:
-        """Count existing tickets in the directory."""
+        """Count existing ticket bundles in the directory."""
         if not self.tickets_dir.exists():
             return 0
-        return len(list(self.tickets_dir.glob("ticket_*.txt")))
+        # Count folders starting with ticket_
+        return len(list(self.tickets_dir.glob("ticket_*")))
 
-    def _format_entities(self, entities: dict) -> str:
-        """
-        Format entities dict for display.
-        
-        Args:
-            entities: Key-value pairs of entities.
-            
-        Returns:
-            Formatted string representation.
-        """
-        if not entities:
-            return "None"
-        
-        parts = [f"{k}: {v}" for k, v in entities.items()]
-        return ", ".join(parts)
+    def _wrap_text(self, text: str, width: int = 50) -> str:
+        """Helper to wrap text for the template."""
+        if not text:
+            return ""
+        return textwrap.fill(text, width=width)
 
-    def generate_ticket(
+    def generate_ticket_content(
         self,
         intent_result: "IntentResult",
-    ) -> tuple[str, Path]:
+        ticket_id: str,
+        timestamp: str,
+    ) -> str:
         """
-        Generate a ticket from an intent result.
+        Generate the formatted text content for a ticket.
         
         Args:
             intent_result: The processed intent data.
+            ticket_id: formatted ID string.
+            timestamp: formatted timestamp string.
             
         Returns:
-            Tuple of (formatted ticket content, file path).
+            Formatted ticket string.
         """
-        self._ticket_count += 1
-        ticket_id = f"{self._ticket_count:05d}"
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        # Format fields with wrapping
+        # We assume the template handles indentation if needed, or we just wrap.
+        # For the specific box template, simple wrapping might break vertical lines 
+        # unless the template is designed for it. 
+        # The user's template has box drawing chars. 
+        # To strictly maintain the box, we would need sophisticated block formatting.
+        # For now, we will use simple placement or just fill.
+        # The user asked for "word wrap basically if the raw input is long".
+        # The provided template put {transcription} inside the box.
+        # If we just replace it, newlines will break the box sides.
+        # We will wrap the text, but to keep the box perfect is hard without a layout engine.
+        # However, for an "80mm paper" sim, maybe we just wrap and don't worry about closing the right side 
+        # perfectly on every line, OR we assume the template is flexible.
+        # Let's try to fit it into the visual block.
         
-        # Format ticket using template
-        ticket_content = self.template.format(
+        # NOTE: The template in config.yaml is:
+        # ╭── 🎫 CUE TICKET #{id} ...
+        # ...
+        # │  RAW INPUT:
+        # │  {transcription}
+        # ...
+        # we will wrap transcription to fit width.
+        
+        wrapped_transcription = self._wrap_text(intent_result.raw_transcription, width=54)
+        # Indent subsequent lines of transcription to align with first line if needed, 
+        # but the template puts it on a new line.
+        # We add a left margin to wrapped lines to look good.
+        wrapped_transcription = wrapped_transcription.replace("\n", "\n│  ")
+
+        return self.template.format(
             id=ticket_id,
             timestamp=timestamp,
-            intent=intent_result.intent,
-            action=intent_result.action,
-            entities=self._format_entities(intent_result.entities),
+            title=intent_result.title,
+            category=intent_result.category,
+            next_action=intent_result.next_action,
+            estimated_time=intent_result.estimated_time,
             confidence=f"{intent_result.confidence * 100:.1f}",
-            transcription=intent_result.raw_transcription,
+            transcription=wrapped_transcription,
         )
-        
-        # Generate filename
-        file_timestamp = get_timestamp_id()
-        filename = f"ticket_{file_timestamp}_{ticket_id}.txt"
-        filepath = self.tickets_dir / filename
-        
-        logger.debug(f"Generated ticket #{ticket_id}")
-        
-        return ticket_content, filepath
 
     def save_ticket(
         self,
         intent_result: "IntentResult",
     ) -> Path:
         """
-        Generate and save a ticket to disk.
+        Generate and save a ticket bundle (Folder with Text + JSON).
         
         Args:
             intent_result: The processed intent data.
             
         Returns:
-            Path to the saved ticket file.
+            Path to the ticket DIRECTORY.
         """
-        ticket_content, filepath = self.generate_ticket(intent_result)
+        self._ticket_count += 1
+        ticket_id = f"{self._ticket_count:05d}"
+        timestamp_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        file_timestamp = get_timestamp_id()
         
-        # Save to file
-        filepath.write_text(ticket_content, encoding="utf-8")
+        # 1. Create Bundle Directory with descriptive name
+        title_slug = self._to_snake_case(intent_result.title)
+        bundle_dir_name = f"ticket_{file_timestamp}_{ticket_id}_{title_slug}"
+        bundle_dir = self.tickets_dir / bundle_dir_name
+        bundle_dir.mkdir(parents=True, exist_ok=True)
         
-        logger.info(f"Ticket saved: {filepath}")
+        # 2. Generate and Save Text Ticket
+        ticket_content = self.generate_ticket_content(intent_result, ticket_id, timestamp_str)
+        txt_path = bundle_dir / "ticket.txt"
+        txt_path.write_text(ticket_content, encoding="utf-8")
         
-        return filepath
+        # 3. Generate and Save JSON Data
+        json_data = {
+            "id": ticket_id,
+            "timestamp": timestamp_str,
+            "title": intent_result.title,
+            "category": intent_result.category,
+            "next_action": intent_result.next_action,
+            "estimated_time": intent_result.estimated_time,
+            "priority": intent_result.priority,
+            "confidence": intent_result.confidence,
+            "raw_transcription": intent_result.raw_transcription,
+            "analysis": intent_result.analysis,
+        }
+        json_path = bundle_dir / "data.json"
+        json_path.write_text(json.dumps(json_data, indent=2, ensure_ascii=False), encoding="utf-8")
+        
+        logger.info(f"Ticket bundle saved: {bundle_dir}")
+        
+        return bundle_dir
 
     def print_ticket(
         self,
@@ -160,114 +208,32 @@ class TicketPrinter:
             save: Whether to also save to file.
             
         Returns:
-            Path to saved file if save=True, else None.
+            Path to saved bundle if save=True, else None.
         """
-        ticket_content, filepath = self.generate_ticket(intent_result)
+        # For console print, we generate a transient content string
+        # We reuse the ID tracking logic only if saving? 
+        # No, printing usually implies we just generated it.
+        # But if we print WITHOUT saving, we shouldn't increment ID in a real system,
+        # but here we usually do both.
+        # For safety, we only increment ID if we save. 
+        # If we just print, we might use a placeholder or peek.
+        # BUT existing logic calls print_ticket(save=True).
         
-        # Print to console with styling
-        output_console.print()
-        output_console.print(
-            Panel(
-                Text(ticket_content, style="bold"),
-                title="[bold green]🎫 TICKET GENERATED[/bold green]",
-                border_style="green",
-                padding=(1, 2),
-            )
-        )
-        
-        # Save if requested
         if save:
-            filepath.write_text(ticket_content, encoding="utf-8")
+            return self.save_ticket(intent_result)
+        else:
+            # Just print to console (preview)
+            # We construct a fake ID for preview
+            preview_content = self.generate_ticket_content(
+                intent_result, "PREVIEW", datetime.now().strftime("%H:%M:%S")
+            )
+            output_console.print()
             output_console.print(
-                f"\n[dim]Saved to: {filepath}[/dim]",
+                Panel(
+                    Text(preview_content, style="bold"),
+                    title="[bold green]🎫 TICKET PREVIEW[/bold green]",
+                    border_style="green",
+                    padding=(1, 2),
+                )
             )
-            logger.info(f"Ticket saved: {filepath}")
-            return filepath
-        
-        return None
-
-    def print_analysis(
-        self,
-        intent_result: "IntentResult",
-    ) -> None:
-        """
-        Print the LLM analysis for debugging.
-        
-        Args:
-            intent_result: The intent result with analysis.
-        """
-        if not intent_result.analysis:
-            return
-        
-        output_console.print()
-        output_console.print(
-            Panel(
-                Text(intent_result.analysis, style="dim"),
-                title="[bold cyan]🧠 LLM Analysis[/bold cyan]",
-                border_style="cyan",
-                padding=(1, 2),
-            )
-        )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# JSON EXPORTER
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-class JSONExporter:
-    """
-    Exports intent results as JSON for structured data processing.
-    
-    Provides machine-readable output in addition to
-    human-readable tickets.
-    """
-
-    def __init__(self, output_dir: Path) -> None:
-        """
-        Initialize the JSON exporter.
-        
-        Args:
-            output_dir: Directory for JSON output.
-        """
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-
-    def export(
-        self,
-        intent_result: "IntentResult",
-        include_analysis: bool = False,
-    ) -> Path:
-        """
-        Export intent result as JSON.
-        
-        Args:
-            intent_result: The intent data to export.
-            include_analysis: Include full LLM analysis.
-            
-        Returns:
-            Path to the saved JSON file.
-        """
-        data = {
-            "timestamp": get_timestamp(),
-            "intent": intent_result.intent,
-            "action": intent_result.action,
-            "entities": intent_result.entities,
-            "confidence": intent_result.confidence,
-            "transcription": intent_result.raw_transcription,
-        }
-        
-        if include_analysis:
-            data["analysis"] = intent_result.analysis
-        
-        filename = f"intent_{get_timestamp_id()}.json"
-        filepath = self.output_dir / filename
-        
-        filepath.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        
-        logger.debug(f"JSON exported: {filepath}")
-        
-        return filepath
+            return None
